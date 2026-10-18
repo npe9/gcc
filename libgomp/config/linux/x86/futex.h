@@ -89,8 +89,13 @@ __futex_wake (int *addr, int futex_op, int count)
 }
 #endif /* __x86_64__ */
 
+/* Lithe (config/linux/lithe_coop.h): liblithe exports its own futex_wait,
+   so libgomp's inline versions take different assembler names.  */
+#define futex_wait gomp_futex_wait_fn
+#define futex_wake gomp_futex_wake_fn
+
 static inline void
-futex_wait (int *addr, int val)
+gomp_sys_futex_wait (int *addr, int val)
 {
   long err = __futex_wait (addr, gomp_futex_wait, val);
 
@@ -104,7 +109,7 @@ futex_wait (int *addr, int val)
 }
 
 static inline void
-futex_wake (int *addr, int count)
+gomp_sys_futex_wake (int *addr, int count)
 {
   long err = __futex_wake (addr, gomp_futex_wake, count);
 
@@ -115,6 +120,46 @@ futex_wake (int *addr, int count)
 
       __futex_wake (addr, gomp_futex_wake, count);
     }
+}
+
+#include "../lithe_coop.h"
+
+/* A Lithe context parks on liblithe's futex emulation, so its hart runs
+   other contexts meanwhile; anything else (a kernel thread, a context that
+   cannot block) takes the kernel futex and is counted, so wakes know
+   whether the syscall is needed.  */
+static inline void
+futex_wait (int *addr, int val)
+{
+  if (gomp_lithe_can_block ())
+    {
+      gomp_lithe_futex_wait_ (addr, val);
+      return;
+    }
+  if (__builtin_expect (gomp_lithe_active, 0))
+    {
+      __atomic_add_fetch (&gomp_lithe_kwaiters, 1, __ATOMIC_SEQ_CST);
+      gomp_sys_futex_wait (addr, val);
+      __atomic_sub_fetch (&gomp_lithe_kwaiters, 1, __ATOMIC_RELAXED);
+      return;
+    }
+  gomp_sys_futex_wait (addr, val);
+}
+
+/* Waiters may be parked contexts and kernel threads at once; wake both.
+   The fence orders the caller's store to *ADDR before the kwaiters load,
+   against the waiter's increment before its syscall re-reads *ADDR.  */
+static inline void
+futex_wake (int *addr, int count)
+{
+  if (__builtin_expect (gomp_lithe_active, 0))
+    {
+      gomp_lithe_futex_wake_some_ (addr, count);
+      __atomic_thread_fence (__ATOMIC_SEQ_CST);
+      if (__atomic_load_n (&gomp_lithe_kwaiters, __ATOMIC_RELAXED) == 0)
+	return;
+    }
+  gomp_sys_futex_wake (addr, count);
 }
 
 static inline void

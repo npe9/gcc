@@ -56,6 +56,11 @@ static inline int do_spin (int *addr, int val)
   for (i = 0; i < count; i++)
     if (__builtin_expect (__atomic_load_n (addr, MEMMODEL_RELAXED) != val, 0))
       return 0;
+    else if (__builtin_expect ((i & 1023) == 0, 0)
+	     && gomp_lithe_should_stop_spinning ())
+      /* Lithe: a peer is runnable with no hart; park now instead of spinning
+	 on the hart it needs.  */
+      return 1;
     else
       cpu_relax ();
   return 1;

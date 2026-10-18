@@ -30,9 +30,50 @@
 #include "pool.h"
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #ifdef LIBGOMP_USE_PTHREADS
 pthread_attr_t gomp_thread_attr;
+
+/* Lithe (config/linux/lithe_coop.h).  */
+#include "config/linux/lithe_coop.h"
+int gomp_lithe_active;
+int gomp_lithe_kwaiters;
+/* Set in a worker that is a Lithe context: its pthread_self () is the
+   hart's kernel thread, which must not be detached.  */
+static __thread int gomp_lithe_ctx_thread;
+
+int
+gomp_lithe_init (void)
+{
+  static int decided;
+  if (__atomic_load_n (&decided, MEMMODEL_ACQUIRE))
+    return gomp_lithe_active;
+  if (lithe_fork_join_context_create && lithe_ensure_root_fork_join_sched
+      && lithe_sched_current && lithe_can_block && lithe_context_yield
+      && gomp_lithe_futex_wait_ && gomp_lithe_futex_wake_some_)
+    {
+      const char *e = getenv ("GOMP_LITHE");
+      if (!e || *e != '0')
+	{
+	  if (lithe_sched_current () != NULL
+	      || lithe_ensure_root_fork_join_sched () != NULL)
+	    __atomic_store_n (&gomp_lithe_active, 1, MEMMODEL_RELEASE);
+	}
+    }
+  __atomic_store_n (&decided, 1, MEMMODEL_RELEASE);
+  return gomp_lithe_active;
+}
+
+lithe_fork_join_sched_t *
+gomp_lithe_worker_sched (void)
+{
+  lithe_sched_t *cur = lithe_sched_current ();
+  if (cur != NULL && lithe_fork_join_sched_funcs
+      && *(const void *const *) cur == (const void *) lithe_fork_join_sched_funcs)
+    return (lithe_fork_join_sched_t *) cur;
+  return lithe_ensure_root_fork_join_sched ();
+}
 
 /* This key is for the thread destructor.  */
 pthread_key_t gomp_thread_destructor;
@@ -140,12 +181,22 @@ gomp_thread_start (void *xdata)
     }
 
   gomp_sem_destroy (&thr->release);
-  pthread_detach (pthread_self ());
+  if (!gomp_lithe_ctx_thread)
+    pthread_detach (pthread_self ());
   thr->thread_pool = NULL;
   thr->task = NULL;
   return NULL;
 }
 #endif
+
+/* Lithe worker entry: the context runs the same idle loop as a pthread
+   worker and ends when it returns.  */
+static void
+gomp_lithe_thread_start (void *xdata)
+{
+  gomp_lithe_ctx_thread = 1;
+  gomp_thread_start (xdata);
+}
 
 static inline struct gomp_team *
 get_last_team (unsigned nthreads)
@@ -854,9 +905,28 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
       start_data->thread_pool = pool;
       start_data->nested = nested;
 
-      attr = gomp_adjust_thread_attr (attr, &thread_attr);
-      err = pthread_create (&start_data->handle, attr, gomp_thread_start,
-			    start_data);
+      if (gomp_lithe_init ())
+	{
+	  /* A Lithe context, not a pthread: the team shares harts with every
+	     other context in the process.  Stack as for a pthread worker.  */
+	  size_t stacksize = 0;
+	  if (pthread_attr_getstacksize (&gomp_thread_attr, &stacksize) != 0
+	      || stacksize < 65536)
+	    stacksize = 4 * 1024 * 1024;
+	  lithe_fork_join_sched_t *ls = gomp_lithe_worker_sched ();
+	  start_data->handle = pthread_self ();
+	  err = (ls != NULL
+		 && lithe_fork_join_context_create (ls, stacksize,
+						    gomp_lithe_thread_start,
+						    start_data) != NULL)
+		? 0 : EAGAIN;
+	}
+      else
+	{
+	  attr = gomp_adjust_thread_attr (attr, &thread_attr);
+	  err = pthread_create (&start_data->handle, attr, gomp_thread_start,
+				start_data);
+	}
       start_data++;
       if (err != 0)
 	gomp_fatal ("Thread creation failed: %s", strerror (err));
