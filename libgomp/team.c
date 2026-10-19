@@ -191,11 +191,26 @@ gomp_thread_start (void *xdata)
 
 /* Lithe worker entry: the context runs the same idle loop as a pthread
    worker and ends when it returns.  */
+/* Pool teardown ends a worker with pthread_exit (gomp_free_pool_helper). In a
+   Lithe context that exits the vcore's kernel thread underneath it: each freed
+   pool cost the process a hart for good (StarPU+OpenMP mix, 2026-10-19: after
+   the OpenMP tenant finished, 3 of 4 vcore threads were gone while the
+   scheduler still counted them, and the StarPU tenant ran on one hart or hung).
+   A Lithe worker unwinds back here instead and its context exits normally.  */
+static __thread void *gomp_lithe_exit_buf[5];
+
+static void __attribute__ ((noreturn))
+gomp_lithe_thread_exit (void)
+{
+  __builtin_longjmp (gomp_lithe_exit_buf, 1);
+}
+
 static void
 gomp_lithe_thread_start (void *xdata)
 {
   gomp_lithe_ctx_thread = 1;
-  gomp_thread_start (xdata);
+  if (__builtin_setjmp (gomp_lithe_exit_buf) == 0)
+    gomp_thread_start (xdata);
 }
 
 static inline struct gomp_team *
@@ -299,6 +314,8 @@ gomp_free_pool_helper (void *thread_pool)
   thr->thread_pool = NULL;
   thr->task = NULL;
 #ifdef LIBGOMP_USE_PTHREADS
+  if (gomp_lithe_ctx_thread)
+    gomp_lithe_thread_exit ();
   pthread_detach (pthread_self ());
   pthread_exit (NULL);
 #elif defined(__nvptx__)
@@ -1126,6 +1143,8 @@ gomp_pause_pool_helper (void *thread_pool)
   gomp_sem_destroy (&thr->release);
   thr->thread_pool = NULL;
   thr->task = NULL;
+  if (gomp_lithe_ctx_thread)
+    gomp_lithe_thread_exit ();
   pthread_exit (NULL);
 }
 
@@ -1169,8 +1188,11 @@ gomp_pause_host (void)
 	  gomp_managed_threads -= pool->threads_used - 1L;
 	  gomp_mutex_unlock (&gomp_managed_threads_lock);
 #endif
-	  for (i = 1; i < pool->threads_used; i++)
-	    pthread_join (thrs[i], NULL);
+	  /* Lithe workers end as contexts (gomp_lithe_thread_exit); their
+	     handle is the creator's thread, nothing to join.  */
+	  if (!gomp_lithe_active)
+	    for (i = 1; i < pool->threads_used; i++)
+	      pthread_join (thrs[i], NULL);
 	}
       if (pool->last_team)
 	free_team (pool->last_team);
