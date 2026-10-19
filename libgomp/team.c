@@ -915,11 +915,15 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
 	    stacksize = 4 * 1024 * 1024;
 	  lithe_fork_join_sched_t *ls = gomp_lithe_worker_sched ();
 	  start_data->handle = pthread_self ();
-	  err = (ls != NULL
-		 && lithe_fork_join_context_create (ls, stacksize,
-						    gomp_lithe_thread_start,
-						    start_data) != NULL)
-		? 0 : EAGAIN;
+	  lithe_fork_join_context_t *lc
+	    = ls ? lithe_fork_join_context_create (ls, stacksize,
+						   gomp_lithe_thread_start,
+						   start_data) : NULL;
+	  /* Pool workers outlive any one user of this scheduler: keep them out
+	     of its join_all (GAPS B26).  */
+	  if (lc && lithe_fork_join_context_set_daemon)
+	    lithe_fork_join_context_set_daemon (lc);
+	  err = lc ? 0 : EAGAIN;
 	}
       else
 	{

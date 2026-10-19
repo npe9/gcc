@@ -33,6 +33,8 @@ extern lithe_fork_join_context_t *
 lithe_fork_join_context_create (lithe_fork_join_sched_t *, size_t,
 				void (*) (void *), void *)
   __attribute__ ((weak));
+extern void lithe_fork_join_context_set_daemon (lithe_fork_join_context_t *)
+  __attribute__ ((weak));
 extern long lithe_fork_join_current_hartless_runnable (void)
   __attribute__ ((weak));
 /* Only its address matters: a fork-join scheduler's first member (funcs)
