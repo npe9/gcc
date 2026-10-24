@@ -40,6 +40,12 @@ extern long lithe_fork_join_current_hartless_runnable (void)
 /* Only its address matters: a fork-join scheduler's first member (funcs)
    points at it.  */
 extern const char lithe_fork_join_sched_funcs[] __attribute__ ((weak));
+/* Lithe's Perfetto trace (sched_trace.h; no-ops unless LITHE_SCHED_TRACE=1).  */
+extern int lithe_sched_trace_enabled (void) __attribute__ ((weak));
+extern void lithe_sched_trace_label_self (const char *) __attribute__ ((weak));
+extern int lithe_sched_trace_intern (const char *) __attribute__ ((weak));
+extern void lithe_sched_trace_phase_begin (int) __attribute__ ((weak));
+extern void lithe_sched_trace_phase_end (void) __attribute__ ((weak));
 /* liblithe's futex emulation (src/lithe/src/futex.c): one wait queue per
    address, the value re-checked under its lock inside lithe_context_block.
    The names collide with libgomp's own futex_wait/futex_wake, which
@@ -91,6 +97,23 @@ gomp_lithe_should_stop_spinning (void)
 	 && lithe_fork_join_current_hartless_runnable
 	 && lithe_can_block ()
 	 && lithe_fork_join_current_hartless_runnable () > 0;
+}
+
+/* Trace phase id for a futex-word wait (spin, then park): barriers, locks, team
+   start.  0 when tracing is off; computed once.  */
+extern int gomp_lithe_trace_wait_id;
+static inline int
+gomp_lithe_trace_wait (void)
+{
+  int id = __atomic_load_n (&gomp_lithe_trace_wait_id, MEMMODEL_RELAXED);
+  if (__builtin_expect (id < 0, 0))
+    {
+      id = (lithe_sched_trace_enabled && lithe_sched_trace_enabled ()
+	    && lithe_sched_trace_intern)
+	   ? lithe_sched_trace_intern ("omp: spin/park wait") : 0;
+      __atomic_store_n (&gomp_lithe_trace_wait_id, id, MEMMODEL_RELAXED);
+    }
+  return id;
 }
 
 #endif /* GOMP_LITHE_COOP_H */

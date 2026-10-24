@@ -68,8 +68,14 @@ static inline int do_spin (int *addr, int val)
 
 static inline void do_wait (int *addr, int val)
 {
+  /* Lithe trace: the whole wait as a phase slice on this context's track.  */
+  int tr = gomp_lithe_trace_wait ();
+  if (tr)
+    lithe_sched_trace_phase_begin (tr);
   if (do_spin (addr, val))
     futex_wait (addr, val);
+  if (tr)
+    lithe_sched_trace_phase_end ();
 }
 
 #ifdef HAVE_ATTRIBUTE_VISIBILITY

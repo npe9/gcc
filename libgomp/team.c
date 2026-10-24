@@ -39,6 +39,7 @@ pthread_attr_t gomp_thread_attr;
 #include "config/linux/lithe_coop.h"
 int gomp_lithe_active;
 int gomp_lithe_kwaiters;
+int gomp_lithe_trace_wait_id = -1;
 /* Set in a worker that is a Lithe context: its pthread_self () is the
    hart's kernel thread, which must not be detached.  */
 static __thread int gomp_lithe_ctx_thread;
@@ -209,6 +210,8 @@ static void
 gomp_lithe_thread_start (void *xdata)
 {
   gomp_lithe_ctx_thread = 1;
+  if (lithe_sched_trace_label_self)
+    lithe_sched_trace_label_self ("omp thread");
   if (__builtin_setjmp (gomp_lithe_exit_buf) == 0)
     gomp_thread_start (xdata);
 }
