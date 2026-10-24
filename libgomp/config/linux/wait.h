@@ -32,6 +32,7 @@
 
 #include "libgomp.h"
 #include <errno.h>
+#include <time.h>
 
 #define FUTEX_WAIT	0
 #define FUTEX_WAKE	1
@@ -45,9 +46,36 @@ extern int gomp_futex_wait, gomp_futex_wake;
 
 #include <futex.h>
 
+/* GOMP_LITHE_SPIN_YIELD: the spin as Lithe yields (lithe_coop.h).  Returns 1
+   if the word did not change within the budget (caller parks).  */
+static int __attribute__ ((noinline))
+do_spin_lithe_yield (int *addr, int val, unsigned long us)
+{
+  struct timespec t0, t;
+  clock_gettime (CLOCK_MONOTONIC, &t0);
+  unsigned long long budget = us * 1000ULL;
+  for (unsigned i = 0; ; i++)
+    {
+      if (__atomic_load_n (addr, MEMMODEL_RELAXED) != val)
+	return 0;
+      lithe_context_yield ();
+      if ((i & 15) == 15)
+	{
+	  clock_gettime (CLOCK_MONOTONIC, &t);
+	  if ((unsigned long long) ((t.tv_sec - t0.tv_sec) * 1000000000LL
+				    + (t.tv_nsec - t0.tv_nsec)) >= budget)
+	    return 1;
+	}
+    }
+}
+
 static inline int do_spin (int *addr, int val)
 {
   unsigned long long i, count = gomp_spin_count_var;
+
+  if (__builtin_expect (gomp_lithe_active, 0) && gomp_lithe_spin_yield_us ()
+      && lithe_context_yield && lithe_can_block && lithe_can_block ())
+    return do_spin_lithe_yield (addr, val, gomp_lithe_spin_yield_us ());
 
   if (__builtin_expect (__atomic_load_n (&gomp_managed_threads,
                                          MEMMODEL_RELAXED)

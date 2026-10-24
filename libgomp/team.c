@@ -66,6 +66,21 @@ gomp_lithe_init (void)
   return gomp_lithe_active;
 }
 
+unsigned long
+gomp_lithe_spin_yield_us (void)
+{
+  static long us = -1;
+  long v = __atomic_load_n (&us, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      const char *e = getenv ("GOMP_LITHE_SPIN_YIELD");
+      const char *b = getenv ("GOMP_LITHE_SPIN_YIELD_US");
+      v = (e && *e == '1') ? (b ? atol (b) : 100) : 0;
+      __atomic_store_n (&us, v, MEMMODEL_RELAXED);
+    }
+  return (unsigned long) v;
+}
+
 lithe_fork_join_sched_t *
 gomp_lithe_worker_sched (void)
 {

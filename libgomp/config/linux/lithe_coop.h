@@ -104,6 +104,25 @@ gomp_lithe_should_stop_spinning (void)
 	 && lithe_fork_join_current_hartless_runnable () > 0;
 }
 
+/* GOMP_LITHE_SPIN_YIELD=1 (default 0 until measured): a spinning waiter's
+   spin IS Lithe yields -- each iteration checks the word and then
+   lithe_context_yield (), which always enters the fork-join scheduler (no fast
+   path), so whoever is runnable gets the hart at once instead of after the
+   1024-iteration stop-spinning check.  The spin is bounded in time
+   (GOMP_LITHE_SPIN_YIELD_US, default 100), then the waiter parks on the Lithe
+   futex as before.  gomp_lithe_spin_yield_us () returns the budget in us, 0
+   when off.
+   MEASURED 2026-10-24 (climml, 4 harts, ms/step, n=5; .build_logs/mphys/
+   climml/spinyield_*): needs liblithe LITHE_FJS_YIELD_REQUEST=1.  Without it
+   a yield never requests a hart, a hart that returned to parlib never comes
+   back, and 4 contexts run on 3 harts: 16.5 vs 9.4 (5/5).  With it: one
+   instance 9.49 vs 9.40 park.  Two instances (8 contexts on 4 harts): the
+   idle instance's yield-spinners are runnable and round-robin with the active
+   team -- budget 5000 us 10.5-11.1, 2000 10.0-10.2, 500 9.6, <= 100 9.4-9.5 =
+   park.  Parity, not a gain, on this workload; default off pending the
+   regression set.  */
+extern unsigned long gomp_lithe_spin_yield_us (void);
+
 /* Trace phase id for a futex-word wait (spin, then park): barriers, locks, team
    start.  0 when tracing is off; computed once.  */
 extern int gomp_lithe_trace_wait_id;
