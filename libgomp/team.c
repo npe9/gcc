@@ -81,6 +81,23 @@ gomp_lithe_spin_yield_us (void)
   return (unsigned long) v;
 }
 
+/* GOMP_LITHE_DOACROSS_YIELD (doacross.h): 1 = a doacross wait that finds a
+   hartless runnable peer yields its hart.  Default ON (measured, doacross.h);
+   =0 restores the pure spin.  */
+int
+gomp_lithe_doacross_yield_on (void)
+{
+  static int on = -1;
+  int v = __atomic_load_n (&on, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      const char *e = getenv ("GOMP_LITHE_DOACROSS_YIELD");
+      v = (e && *e) ? (*e != '0') : 1;
+      __atomic_store_n (&on, v, MEMMODEL_RELAXED);
+    }
+  return v;
+}
+
 lithe_fork_join_sched_t *
 gomp_lithe_worker_sched (void)
 {

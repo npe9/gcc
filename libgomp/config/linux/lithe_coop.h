@@ -122,6 +122,7 @@ gomp_lithe_should_stop_spinning (void)
    park.  Parity, not a gain, on this workload; default off pending the
    regression set.  */
 extern unsigned long gomp_lithe_spin_yield_us (void);
+extern int gomp_lithe_doacross_yield_on (void);
 
 /* Trace phase id for a futex-word wait (spin, then park): barriers, locks, team
    start.  0 when tracing is off; computed once.  */

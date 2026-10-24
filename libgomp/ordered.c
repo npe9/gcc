@@ -481,6 +481,7 @@ GOMP_doacross_wait (long first, ...)
       return;
     }
 
+  unsigned spin_n = 0;
   do
     {
       va_start (ap, first);
@@ -500,7 +501,7 @@ GOMP_doacross_wait (long first, ...)
       va_end (ap);
       if (i == doacross->ncounts)
 	break;
-      cpu_relax ();
+      doacross_relax (&spin_n);
     }
   while (1);
   __sync_synchronize ();
@@ -761,6 +762,7 @@ GOMP_doacross_ull_wait (gomp_ull first, ...)
     {
       gomp_ull *array = (gomp_ull *) (doacross->array
 				      + ent * doacross->elt_sz);
+      unsigned spin_n = 0;
       do
 	{
 	  va_start (ap, first);
@@ -780,7 +782,7 @@ GOMP_doacross_ull_wait (gomp_ull first, ...)
 	  va_end (ap);
 	  if (i == doacross->ncounts)
 	    break;
-	  cpu_relax ();
+	  doacross_relax (&spin_n);
 	}
       while (1);
     }
@@ -788,6 +790,7 @@ GOMP_doacross_ull_wait (gomp_ull first, ...)
     {
       unsigned long *array = (unsigned long *) (doacross->array
 						+ ent * doacross->elt_sz);
+      unsigned spin_n = 0;
       do
 	{
 	  va_start (ap, first);
@@ -819,7 +822,7 @@ GOMP_doacross_ull_wait (gomp_ull first, ...)
 	  va_end (ap);
 	  if (i == doacross->ncounts)
 	    break;
-	  cpu_relax ();
+	  doacross_relax (&spin_n);
 	}
       while (1);
     }
