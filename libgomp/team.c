@@ -76,6 +76,63 @@ gomp_lithe_worker_sched (void)
   return lithe_ensure_root_fork_join_sched ();
 }
 
+/* GOMP_LITHE_OWN_SCHED=1 (default 0): this libgomp instance runs its teams in
+   its OWN fork-join scheduler instead of the caller's.  The question it
+   answers: when two independent OpenMP runtime instances share a process (a
+   library loaded RTLD_LOCAL/DEEPBIND with its own libgomp copy, as torch's
+   vendored libgomp.so is), should each be a separate Lithe scheduler -- the
+   hierarchical design of the original Lithe -- or put its workers in the
+   scheduler the caller is already in (the default, "flat")?
+   Each master thread gets one persistent scheduler per instance; a top-level
+   region enters it before the pool is woken (so the wakes land in a
+   registered scheduler that can request harts) and the master exits it at team
+   end.  Pool workers are created while it is current, so they live in it.
+   Unlike libomp's sticky top scheduler (z_Linux_util.cpp) this cannot stay
+   entered across regions: the master runs the OTHER instance's regions in
+   between, and staying entered would nest that instance's scheduler under
+   this one.  The cost being measured is the per-region enter/exit (exit
+   drains the child's harts) and the sideways hart movement between the two
+   sibling schedulers.
+   MEASURED 2026-10-24 (bench/mphys/climml, .build_logs/mphys/climml): keep it
+   OFF.  FTorch-style host + torch on 4 harts, two instances (torch's vendored
+   copy loaded DEEPBIND), ms/step: flat 9.4 -- identical to ONE instance, so
+   flat composition of two instances is free; separate 238 (25x), with one
+   instance as well, so the cost is per-region enter/exit, not the second
+   instance.  perf: workers returning to the pool dock spin the full
+   GOMP_SPINCOUNT on the child's harts and sched_exit's drain waits them out
+   (~5.6 ms/region; gomp_lithe_should_stop_spinning does not see a draining
+   master).  With GOMP_SPINCOUNT=0 separate is still 19.4 vs 9.4 (~0.2 ms per
+   region of harts moving parent -> child -> parent); flat is unchanged by
+   it.  Same finding as libomp's flat mode (z_Linux_util.cpp, GAPS B24).  */
+static __thread lithe_fork_join_sched_t *gomp_lithe_own_fj;
+static __thread int gomp_lithe_own_entered;
+
+static int
+gomp_lithe_own_sched_on (void)
+{
+  static int on = -1;
+  if (on < 0)
+    {
+      const char *e = getenv ("GOMP_LITHE_OWN_SCHED");
+      on = (e && *e == '1' && lithe_fork_join_sched_create && lithe_sched_enter
+	    && lithe_sched_exit) ? 1 : 0;
+    }
+  return on;
+}
+
+/* Called by a top-level master before it wakes or creates its team.  */
+static void
+gomp_lithe_own_enter (void)
+{
+  if (!gomp_lithe_own_fj)
+    gomp_lithe_own_fj = lithe_fork_join_sched_create ();
+  if (gomp_lithe_own_fj)
+    {
+      lithe_sched_enter ((lithe_sched_t *) gomp_lithe_own_fj);
+      gomp_lithe_own_entered = 1;
+    }
+}
+
 /* This key is for the thread destructor.  */
 pthread_key_t gomp_thread_destructor;
 
@@ -424,6 +481,9 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
      In particular, we should save any work share state from an outer
      orphaned work share construct.  */
   team->prev_ts = thr->ts;
+
+  if (!nested && nthreads > 1 && gomp_lithe_init () && gomp_lithe_own_sched_on ())
+    gomp_lithe_own_enter ();
 
   thr->ts.team = team;
   thr->ts.team_id = 0;
@@ -1104,6 +1164,11 @@ gomp_team_end (void)
 	free_team (pool->last_team);
       pool->last_team = team;
       gomp_release_thread_pool (pool);
+    }
+  if (gomp_lithe_own_entered && thr->ts.level == 0)
+    {
+      gomp_lithe_own_entered = 0;
+      lithe_sched_exit ();
     }
 }
 

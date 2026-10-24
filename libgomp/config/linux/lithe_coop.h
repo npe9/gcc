@@ -37,6 +37,11 @@ extern void lithe_fork_join_context_set_daemon (lithe_fork_join_context_t *)
   __attribute__ ((weak));
 extern long lithe_fork_join_current_hartless_runnable (void)
   __attribute__ ((weak));
+/* GOMP_LITHE_OWN_SCHED: this runtime instance's own fork-join scheduler.  */
+extern lithe_fork_join_sched_t *lithe_fork_join_sched_create (void)
+  __attribute__ ((weak));
+extern void lithe_sched_enter (lithe_sched_t *) __attribute__ ((weak));
+extern void lithe_sched_exit (void) __attribute__ ((weak));
 /* Only its address matters: a fork-join scheduler's first member (funcs)
    points at it.  */
 extern const char lithe_fork_join_sched_funcs[] __attribute__ ((weak));
