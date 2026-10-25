@@ -30,6 +30,9 @@
 #include <string.h>
 #include "doacross.h"
 
+/* Lithe doacross futex slots (doacross.h, GOMP_LITHE_DOACROSS_BLOCK).  */
+struct gomp_lithe_dx_slot gomp_lithe_dx_slots[64] __attribute__ ((aligned (64)));
+
 
 /* This function is called when first allocating an iteration block.  That
    is, the thread is not currently on the queue.  The work-share lock must
@@ -408,6 +411,7 @@ GOMP_doacross_post (long *counts)
 	__atomic_thread_fence (MEMMODEL_RELEASE);
       else
 	__atomic_store_n (array, flattened, MEMMODEL_RELEASE);
+      doacross_lithe_post (doacross, array);
       return;
     }
 
@@ -417,6 +421,7 @@ GOMP_doacross_post (long *counts)
       if (counts[i] + 1UL != __atomic_load_n (&array[i], MEMMODEL_RELAXED))
 	__atomic_store_n (&array[i], counts[i] + 1UL, MEMMODEL_RELEASE);
     }
+  doacross_lithe_post (doacross, array);
 }
 
 /* DOACROSS WAIT operation.  */
@@ -475,13 +480,14 @@ GOMP_doacross_wait (long first, ...)
 	  va_end (ap);
 	  return;
 	}
-      doacross_spin (array, flattened, cur);
+      doacross_spin (doacross, array, flattened, cur);
       __atomic_thread_fence (MEMMODEL_RELEASE);
       va_end (ap);
       return;
     }
 
   unsigned spin_n = 0;
+  struct doacross_lithe_wait lw = { 0, 0 };
   do
     {
       va_start (ap, first);
@@ -501,9 +507,10 @@ GOMP_doacross_wait (long first, ...)
       va_end (ap);
       if (i == doacross->ncounts)
 	break;
-      doacross_relax (&spin_n);
+      doacross_relax2 (&lw, doacross, array, &spin_n);
     }
   while (1);
+  doacross_lithe_wait_end (&lw, doacross, array);
   __sync_synchronize ();
 }
 
@@ -664,6 +671,7 @@ GOMP_doacross_ull_post (gomp_ull *counts)
 	__atomic_thread_fence (MEMMODEL_RELEASE);
       else
 	__atomic_store_n (array, flattened, MEMMODEL_RELEASE);
+      doacross_lithe_post (doacross, array);
       return;
     }
 
@@ -678,6 +686,7 @@ GOMP_doacross_ull_post (gomp_ull *counts)
 	  if (counts[i] + 1UL != __atomic_load_n (&array[i], MEMMODEL_RELAXED))
 	    __atomic_store_n (&array[i], counts[i] + 1UL, MEMMODEL_RELEASE);
 	}
+      doacross_lithe_post (doacross, array);
     }
   else
     {
@@ -694,6 +703,7 @@ GOMP_doacross_ull_post (gomp_ull *counts)
 	  if (c != __atomic_load_n (&array[2 * i], MEMMODEL_RELAXED))
 	    __atomic_store_n (&array[2 * i], c, MEMMODEL_RELEASE);
 	}
+      doacross_lithe_post (doacross, array);
     }
 }
 
@@ -752,7 +762,7 @@ GOMP_doacross_ull_wait (gomp_ull first, ...)
 	  va_end (ap);
 	  return;
 	}
-      doacross_spin (array, flattened, cur);
+      doacross_spin (doacross, array, flattened, cur);
       __atomic_thread_fence (MEMMODEL_RELEASE);
       va_end (ap);
       return;
@@ -763,6 +773,7 @@ GOMP_doacross_ull_wait (gomp_ull first, ...)
       gomp_ull *array = (gomp_ull *) (doacross->array
 				      + ent * doacross->elt_sz);
       unsigned spin_n = 0;
+  struct doacross_lithe_wait lw = { 0, 0 };
       do
 	{
 	  va_start (ap, first);
@@ -782,15 +793,17 @@ GOMP_doacross_ull_wait (gomp_ull first, ...)
 	  va_end (ap);
 	  if (i == doacross->ncounts)
 	    break;
-	  doacross_relax (&spin_n);
+	  doacross_relax2 (&lw, doacross, array, &spin_n);
 	}
       while (1);
+      doacross_lithe_wait_end (&lw, doacross, array);
     }
   else
     {
       unsigned long *array = (unsigned long *) (doacross->array
 						+ ent * doacross->elt_sz);
       unsigned spin_n = 0;
+  struct doacross_lithe_wait lw = { 0, 0 };
       do
 	{
 	  va_start (ap, first);
@@ -822,9 +835,10 @@ GOMP_doacross_ull_wait (gomp_ull first, ...)
 	  va_end (ap);
 	  if (i == doacross->ncounts)
 	    break;
-	  doacross_relax (&spin_n);
+	  doacross_relax2 (&lw, doacross, array, &spin_n);
 	}
       while (1);
+      doacross_lithe_wait_end (&lw, doacross, array);
     }
   __sync_synchronize ();
 }

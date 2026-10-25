@@ -98,6 +98,34 @@ gomp_lithe_doacross_yield_on (void)
   return v;
 }
 
+/* GOMP_LITHE_DOACROSS_BLOCK / _SPIN (config/linux/doacross.h).  */
+int gomp_lithe_doacross_block_mode = -1;
+unsigned gomp_lithe_doacross_spin;
+int
+gomp_lithe_doacross_block_init (void)
+{
+  const char *e = getenv ("GOMP_LITHE_DOACROSS_BLOCK");
+  const char *n = getenv ("GOMP_LITHE_DOACROSS_SPIN");
+  int v = (e && *e) ? (*e != '0') : 1;
+  gomp_lithe_doacross_spin = n ? (unsigned) atol (n) : 4000;
+  __atomic_store_n (&gomp_lithe_doacross_block_mode, v, MEMMODEL_RELAXED);
+  return v;
+}
+
+/* GOMP_LITHE_NOSPIN (config/linux/wait.h do_spin): a Lithe context that may
+   block parks at once instead of spinning GOMP_SPINCOUNT.  */
+int gomp_lithe_nospin_mode = -1;
+static int gomp_lithe_own_sched_on (void);
+int
+gomp_lithe_nospin_init (void)
+{
+  /* Default: on exactly when GOMP_LITHE_OWN_SCHED=1 (see wait.h).  */
+  const char *e = getenv ("GOMP_LITHE_NOSPIN");
+  int v = (e && *e) ? (*e != '0') : gomp_lithe_own_sched_on ();
+  __atomic_store_n (&gomp_lithe_nospin_mode, v, MEMMODEL_RELAXED);
+  return v;
+}
+
 lithe_fork_join_sched_t *
 gomp_lithe_worker_sched (void)
 {

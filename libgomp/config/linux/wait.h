@@ -69,9 +69,41 @@ do_spin_lithe_yield (int *addr, int val, unsigned long us)
     }
 }
 
+/* GOMP_LITHE_NOSPIN (team.c; default = on iff GOMP_LITHE_OWN_SCHED=1): on a
+   Lithe context that may block, no spin at all -- every futex-word wait (team
+   barrier, pool dock, mutex, sem, ptrlock, ordered) parks on the Lithe futex
+   at once, and the hart goes back to the scheduler.  Supersedes
+   GOMP_LITHE_SPIN_YIELD when on.  Kernel threads and contexts that cannot
+   block keep GOMP_SPINCOUNT.
+   MEASURED 2026-10-24 (cores 32-35, 4 harts, n=5 interleaved,
+   .build_logs/despin/openmp/{ab_libgomp.csv,ab_misc.csv,climml/ns1}):
+   flat (the default composition) it LOSES where the spin bridges short gaps:
+   region cost 4 threads 1.77 -> 3.86 us, 8 threads 7.01 -> 7.25; contended
+   omp_lock 8 threads (1000/1000) 0.114 -> 0.151 s; OpenMP-alone in the TBB/HPX
+   mixes +3 %; neutral on the X+OpenMP mixes (TBB 0.153/0.153, HPX 0.166/0.160,
+   PaRSEC 0.268/0.261, StarPU 0.144/0.145 s), nested, tasks, climml l1f/l2f
+   (8.98/9.12, 9.01/9.07 ms/step); better for ordered at 8/16 threads
+   (6.0 -> 4.8, 6.5 -> 5.3 ms).  The existing spin already stops when a
+   runnable peer has no hart (gomp_lithe_should_stop_spinning), which is the
+   demand-aware part.  What that check cannot see is a scheduler boundary:
+   with GOMP_LITHE_OWN_SCHED=1 the dock spin holds the child scheduler's harts
+   against the master's sched_exit drain -- climml l1s 228.5 -> 19.0, l2s
+   228.7 -> 19.0 ms/step (= GOMP_SPINCOUNT=0, 18.7).  Hence the default.  */
+extern int gomp_lithe_nospin_mode;
+extern int gomp_lithe_nospin_init (void);
+
 static inline int do_spin (int *addr, int val)
 {
   unsigned long long i, count = gomp_spin_count_var;
+
+  if (__builtin_expect (gomp_lithe_active, 0))
+    {
+      int m = __atomic_load_n (&gomp_lithe_nospin_mode, MEMMODEL_RELAXED);
+      if (__builtin_expect (m < 0, 0))
+	m = gomp_lithe_nospin_init ();
+      if (m && lithe_can_block ())
+	return __atomic_load_n (addr, MEMMODEL_RELAXED) == val;
+    }
 
   if (__builtin_expect (gomp_lithe_active, 0) && gomp_lithe_spin_yield_us ()
       && lithe_context_yield && lithe_can_block && lithe_can_block ())
