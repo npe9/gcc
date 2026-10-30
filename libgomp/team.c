@@ -81,6 +81,106 @@ gomp_lithe_spin_yield_us (void)
   return (unsigned long) v;
 }
 
+int
+gomp_lithe_spin_demand_yield (void)
+{
+  static int on = -1;
+  int v = __atomic_load_n (&on, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      /* value = check interval in spin iterations (a power of two); 1 = 64 */
+      const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_YIELD");
+      long n = e ? atol (e) : 0;
+      v = n <= 0 ? 0 : n == 1 ? 64 : (int) n;
+      while (v & (v - 1))
+	v &= v - 1;
+      __atomic_store_n (&on, v, MEMMODEL_RELAXED);
+    }
+  return v;
+}
+
+unsigned long
+gomp_lithe_spin_demand_yield_us (void)
+{
+  static long us = -1;
+  long v = __atomic_load_n (&us, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_YIELD_US");
+      /* -1: park as soon as demand is seen (no yield phase); stored as -2
+	 so the "unread" sentinel stays -1 */
+      v = e ? atol (e) : 20;
+      if (v < 0)
+	v = -2;
+      __atomic_store_n (&us, v, MEMMODEL_RELAXED);
+    }
+  return v == -2 ? (unsigned long) -1 : (unsigned long) v;
+}
+
+int gomp_lithe_demand_yielders;
+
+int
+gomp_lithe_spin_demand_discount (void)
+{
+  static int on = -1;
+  int v = __atomic_load_n (&on, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_DISCOUNT");
+      v = e && *e == '1';
+      __atomic_store_n (&on, v, MEMMODEL_RELAXED);
+    }
+  return v;
+}
+
+long
+gomp_lithe_spin_demand_park_at (void)
+{
+  static long n = -1;
+  long v = __atomic_load_n (&n, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_PARK_AT");
+      v = e ? atol (e) : 0;
+      if (v < 0)
+	v = 0;
+      __atomic_store_n (&n, v, MEMMODEL_RELAXED);
+    }
+  return v;
+}
+
+int
+gomp_lithe_spin_demand_min_harts (void)
+{
+  static int n = -1;
+  int v = __atomic_load_n (&n, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_YIELD_MIN_HARTS");
+      v = e ? atoi (e) : 0;
+      if (v < 0)
+	v = 0;
+      __atomic_store_n (&n, v, MEMMODEL_RELAXED);
+    }
+  return v;
+}
+
+int
+gomp_lithe_spin_demand_xproc (void)
+{
+  static int on = -1;
+  int v = __atomic_load_n (&on, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      /* bit 0: fork domain (parlib_domain_contended), bit 1: this hart's
+	 CPU is shared (parlib_cpu_contended) */
+      const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_XPROC");
+      v = e ? atoi (e) & 3 : 0;
+      __atomic_store_n (&on, v, MEMMODEL_RELAXED);
+    }
+  return v;
+}
+
 /* GOMP_LITHE_DOACROSS_YIELD (doacross.h): 1 = a doacross wait that finds a
    hartless runnable peer yields its hart.  Default ON (measured, doacross.h);
    =0 restores the pure spin.  */

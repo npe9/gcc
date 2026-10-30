@@ -25,6 +25,9 @@ typedef struct lithe_fork_join_sched lithe_fork_join_sched_t;
 typedef struct lithe_fork_join_context lithe_fork_join_context_t;
 
 extern lithe_sched_t *lithe_sched_current (void) __attribute__ ((weak));
+extern int parlib_domain_contended (void) __attribute__ ((weak)); /* parlib */
+extern int parlib_cpu_contended (void) __attribute__ ((weak)); /* parlib */
+extern int parlib_vcore_limit (void) __attribute__ ((weak)); /* parlib */
 extern int lithe_can_block (void) __attribute__ ((weak));
 extern void lithe_context_yield (void) __attribute__ ((weak));
 extern lithe_fork_join_sched_t *lithe_ensure_root_fork_join_sched (void)
@@ -122,6 +125,60 @@ gomp_lithe_should_stop_spinning (void)
    park.  Parity, not a gain, on this workload; default off pending the
    regression set.  */
 extern unsigned long gomp_lithe_spin_yield_us (void);
+
+/* GOMP_LITHE_SPIN_DEMAND_YIELD=1 (default 0 until measured): the spin stays a
+   spin while nobody needs the hart, and yields it -- instead of parking -- when
+   a runnable peer has none (checked every 64 iterations, not 1024).  Neither
+   fixed mode fits both cases (2026-10-30, 4 harts, region cost us): plain spin
+   1.83 at 4 threads / 6.91 at 8; spin-as-yields 2.75-3.09 / 4.72 (a yield with
+   nobody waiting is a scheduler round trip).  GROMACS 2 ranks x 4 threads on 4
+   CPUs: spin 148 ns/day, yields 167, park-at-once 163; the stop-spinning park
+   costs a block + wake per gap (.build_logs/gmx_gompl_gap).  */
+extern int gomp_lithe_spin_demand_yield (void);
+/* GOMP_LITHE_SPIN_DEMAND_YIELD_US (default 20): once demand is seen, the rest
+   of the wait is GOMP_LITHE_SPIN_YIELD-style yields for this many us, then
+   park; 0 = keep yielding for the whole spin count; -1 = park at once.  */
+extern unsigned long gomp_lithe_spin_demand_yield_us (void);
+/* GOMP_LITHE_SPIN_DEMAND_DISCOUNT=1 (A/B, default 0): demand = more hartless
+   runnable contexts than waiters now in the demand-yield phase.  A waiter that
+   yields is itself runnable without a hart, so without the discount one
+   yielder makes every other spinner see demand and they round-robin among
+   themselves (nested 4x4 on 4 harts +14 %).  */
+extern int gomp_lithe_spin_demand_discount (void);
+extern int gomp_lithe_demand_yielders;
+/* MEASURED 2026-10-30 (4 harts, n=10, .build_logs/gmx_gompl_gap/micro_dy4.csv):
+   the discount is WRONG -- region 8 threads 0.724 -> 1.339 of spin (yield-
+   spinners trading the hart is what helps flat oversubscription), nested 4x4
+   unchanged 1.11 -> 1.15.  Kept only for the record; do not enable.
+
+   GOMP_LITHE_SPIN_DEMAND_PARK_AT=N (A/B, default 0 = off): with N or more
+   hartless runnable contexts, park instead of yield-spinning (deep
+   oversubscription: nested 4x4 parks better, flat 2x yields better).  */
+extern long gomp_lithe_spin_demand_park_at (void);
+/* GOMP_LITHE_SPIN_DEMAND_XPROC=1 (A/B, default 0; bit 0 needs PARLIB_FORK_DOMAIN=1):
+   when demand is seen and the fork domain holds more harts than CPUs (a sibling
+   process -- a forked DataLoader worker -- would run if we parked), park instead
+   of yield.  The yield hands the hart to our own process; the park hands the CPU
+   to the kernel, where the sibling can take it (GAPS B85/B87).  */
+extern int gomp_lithe_spin_demand_xproc (void);
+/* GOMP_LITHE_SPIN_DEMAND_YIELD_MIN_HARTS=N (A/B, default 0 = any): use the
+   demand-yield path only in a process admitted N or more harts.  B87: a forked
+   DataLoader worker (1 hart, a 4-thread team) under demand-yield spent 45 % of
+   all CPU cycling its idle waiters through the scheduler -- on one hart a yield
+   can only take time from the thread that has the work, a park lets it run.  */
+extern int gomp_lithe_spin_demand_min_harts (void);
+/* =2 (bit 1): park when this hart's CPU is shared with another task right now
+   (parlib_cpu_contended: the hart's OS thread was involuntarily preempted in
+   the last ~1 ms) -- sees DataLoader workers, which are not Lithe processes
+   and so are outside the fork domain.  =3: either.  */
+static inline int
+gomp_lithe_demand_elsewhere (void)
+{
+  int x = gomp_lithe_spin_demand_xproc ();
+  return x
+	 && (((x & 1) && parlib_domain_contended && parlib_domain_contended ())
+	     || ((x & 2) && parlib_cpu_contended && parlib_cpu_contended ()));
+}
 extern int gomp_lithe_doacross_yield_on (void);
 
 /* Trace phase id for a futex-word wait (spin, then park): barriers, locks, team

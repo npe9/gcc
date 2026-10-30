@@ -113,6 +113,49 @@ static inline int do_spin (int *addr, int val)
                                          MEMMODEL_RELAXED)
                         > gomp_available_cpus, 0))
     count = gomp_throttled_spin_count_var;
+  int dy;
+  if (__builtin_expect (gomp_lithe_active, 0)
+      && (dy = gomp_lithe_spin_demand_yield ()) != 0
+      && lithe_context_yield && lithe_can_block && lithe_can_block ()
+      && (gomp_lithe_spin_demand_min_harts () == 0 || !parlib_vcore_limit
+	  || parlib_vcore_limit () >= gomp_lithe_spin_demand_min_harts ()))
+    {
+      /* GOMP_LITHE_SPIN_DEMAND_YIELD (lithe_coop.h): yield the hart to a
+	 hartless runnable peer, keep spinning otherwise.  */
+      for (i = 0; i < count; i++)
+	if (__builtin_expect (__atomic_load_n (addr, MEMMODEL_RELAXED) != val, 0))
+	  return 0;
+	else if (__builtin_expect ((i & (dy - 1)) == 0, 0)
+		 && (gomp_lithe_spin_demand_discount ()
+		     ? lithe_fork_join_current_hartless_runnable () >
+		       __atomic_load_n (&gomp_lithe_demand_yielders,
+					MEMMODEL_RELAXED)
+		     : gomp_lithe_should_stop_spinning ()))
+	  {
+	    /* demand: spin as yields for a bounded time, then park; unbounded
+	       yielding let spinners trade the hart (LAMMPS over -13 %) */
+	    unsigned long us = gomp_lithe_spin_demand_yield_us ();
+	    long pa = gomp_lithe_spin_demand_park_at ();
+	    if (us == (unsigned long) -1
+		|| (pa && lithe_fork_join_current_hartless_runnable () >= pa)
+		|| gomp_lithe_demand_elsewhere ())
+	      return 1;
+	    if (us)
+	      {
+		int r;
+		__atomic_add_fetch (&gomp_lithe_demand_yielders, 1,
+				    MEMMODEL_RELAXED);
+		r = do_spin_lithe_yield (addr, val, us);
+		__atomic_sub_fetch (&gomp_lithe_demand_yielders, 1,
+				    MEMMODEL_RELAXED);
+		return r;
+	      }
+	    lithe_context_yield ();
+	  }
+	else
+	  cpu_relax ();
+      return 1;
+    }
   for (i = 0; i < count; i++)
     if (__builtin_expect (__atomic_load_n (addr, MEMMODEL_RELAXED) != val, 0))
       return 0;
