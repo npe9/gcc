@@ -150,6 +150,27 @@ gomp_lithe_spin_demand_park_at (void)
 }
 
 int
+gomp_lithe_spin_demand_skip_foreign (void)
+{
+  static int on = -1;
+  int v = __atomic_load_n (&on, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_SKIP_FOREIGN");
+      v = e && *e == '1';
+      __atomic_store_n (&on, v, MEMMODEL_RELAXED);
+    }
+  return v;
+}
+
+int
+gomp_lithe_team_foreign_master (void)
+{
+  struct gomp_team *team = gomp_thread ()->ts.team;
+  return team != NULL && team->lithe_foreign_master;
+}
+
+int
 gomp_lithe_spin_demand_min_harts (void)
 {
   static int n = -1;
@@ -644,6 +665,8 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
 
   if (!nested && nthreads > 1 && gomp_lithe_init () && gomp_lithe_own_sched_on ())
     gomp_lithe_own_enter ();
+  team->lithe_foreign_master = gomp_lithe_active && lithe_can_block
+			       && !lithe_can_block ();
 
   thr->ts.team = team;
   thr->ts.team_id = 0;

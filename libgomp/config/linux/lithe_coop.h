@@ -167,6 +167,12 @@ extern int gomp_lithe_spin_demand_xproc (void);
    all CPU cycling its idle waiters through the scheduler -- on one hart a yield
    can only take time from the thread that has the work, a park lets it run.  */
 extern int gomp_lithe_spin_demand_min_harts (void);
+/* GOMP_LITHE_SPIN_DEMAND_SKIP_FOREIGN=1 (A/B, default 0): no demand-yield in a
+   team whose master is not a Lithe context (a stock-Python joblib thread): that
+   master is a kernel thread competing with the harts for the CPUs, and yield-
+   spinning waiters keep the harts busy (hgb_joblib c4 0.79-0.85 of spin).  */
+extern int gomp_lithe_spin_demand_skip_foreign (void);
+extern int gomp_lithe_team_foreign_master (void);
 /* =2 (bit 1): park when this hart's CPU is shared with another task right now
    (parlib_cpu_contended: the hart's OS thread was involuntarily preempted in
    the last ~1 ms) -- sees DataLoader workers, which are not Lithe processes

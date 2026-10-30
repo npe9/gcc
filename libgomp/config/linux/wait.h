@@ -118,7 +118,9 @@ static inline int do_spin (int *addr, int val)
       && (dy = gomp_lithe_spin_demand_yield ()) != 0
       && lithe_context_yield && lithe_can_block && lithe_can_block ()
       && (gomp_lithe_spin_demand_min_harts () == 0 || !parlib_vcore_limit
-	  || parlib_vcore_limit () >= gomp_lithe_spin_demand_min_harts ()))
+	  || parlib_vcore_limit () >= gomp_lithe_spin_demand_min_harts ())
+      && !(gomp_lithe_spin_demand_skip_foreign ()
+	   && gomp_lithe_team_foreign_master ()))
     {
       /* GOMP_LITHE_SPIN_DEMAND_YIELD (lithe_coop.h): yield the hart to a
 	 hartless runnable peer, keep spinning otherwise.  */

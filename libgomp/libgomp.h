@@ -780,6 +780,10 @@ struct gomp_team
   /* This is the number of threads in the current team.  */
   unsigned nthreads;
 
+  /* Lithe (lithe_coop.h): the master is not a Lithe context -- a plain OS thread
+     (a joblib/Python thread) that holds no hart.  */
+  unsigned char lithe_foreign_master;
+
   /* This is number of gomp_work_share structs that have been allocated
      as a block last time.  */
   unsigned work_share_chunk;
