@@ -173,6 +173,11 @@ extern int gomp_lithe_spin_demand_min_harts (void);
    spinning waiters keep the harts busy (hgb_joblib c4 0.79-0.85 of spin).  */
 extern int gomp_lithe_spin_demand_skip_foreign (void);
 extern int gomp_lithe_team_foreign_master (void);
+/* GOMP_LITHE_SPIN_DEMAND_SKIP_NESTED (A/B, default 0): no demand-yield where
+   nesting is in play.  =1: in a nested (inner) team; =2: in any team while some
+   nested team is active in the process.  Nested 2x4 / 4x4 on 4 harts lose
+   5-7 % with demand-yield while flat oversubscription gains 16-27 % (GAPS B89).  */
+extern int gomp_lithe_spin_demand_skip_nested (void);
 /* =2 (bit 1): park when this hart's CPU is shared with another task right now
    (parlib_cpu_contended: the hart's OS thread was involuntarily preempted in
    the last ~1 ms) -- sees DataLoader workers, which are not Lithe processes

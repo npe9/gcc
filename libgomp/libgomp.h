@@ -783,6 +783,8 @@ struct gomp_team
   /* Lithe (lithe_coop.h): the master is not a Lithe context -- a plain OS thread
      (a joblib/Python thread) that holds no hart.  */
   unsigned char lithe_foreign_master;
+  /* Lithe: a nested team, counted in gomp_lithe_nested_teams.  */
+  unsigned char lithe_nested;
 
   /* This is number of gomp_work_share structs that have been allocated
      as a block last time.  */

@@ -170,6 +170,26 @@ gomp_lithe_team_foreign_master (void)
   return team != NULL && team->lithe_foreign_master;
 }
 
+static int gomp_lithe_nested_teams;
+
+int
+gomp_lithe_spin_demand_skip_nested (void)
+{
+  static int mode = -1;
+  int v = __atomic_load_n (&mode, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_SKIP_NESTED");
+      v = e ? atoi (e) & 3 : 0;
+      __atomic_store_n (&mode, v, MEMMODEL_RELAXED);
+    }
+  if (v == 1)
+    return gomp_thread ()->ts.level > 1;
+  if (v == 2)
+    return __atomic_load_n (&gomp_lithe_nested_teams, MEMMODEL_RELAXED) != 0;
+  return 0;
+}
+
 int
 gomp_lithe_spin_demand_min_harts (void)
 {
@@ -667,6 +687,9 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
     gomp_lithe_own_enter ();
   team->lithe_foreign_master = gomp_lithe_active && lithe_can_block
 			       && !lithe_can_block ();
+  team->lithe_nested = nested && gomp_lithe_active;
+  if (team->lithe_nested)
+    __atomic_add_fetch (&gomp_lithe_nested_teams, 1, MEMMODEL_RELAXED);
 
   thr->ts.team = team;
   thr->ts.team_id = 0;
@@ -1291,6 +1314,8 @@ gomp_team_end (void)
      team->barrier in a inconsistent state, we need to use a different
      counter here.  */
   gomp_team_barrier_wait_final (&team->barrier);
+  if (team->lithe_nested)
+    __atomic_sub_fetch (&gomp_lithe_nested_teams, 1, MEMMODEL_RELAXED);
   if (__builtin_expect (team->team_cancelled, 0))
     {
       struct gomp_work_share *ws = team->work_shares_to_free;
