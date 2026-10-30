@@ -90,7 +90,8 @@ gomp_lithe_spin_demand_yield (void)
     {
       /* value = check interval in spin iterations (a power of two); 1 = 64 */
       const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_YIELD");
-      long n = e ? atol (e) : 0;
+      /* DEFAULT ON since 2026-10-30 (GAPS B89): n=10 parity or better on AI composition, apps bal/over, micro, climml; =0 off.  */
+      long n = e && *e ? atol (e) : 1;
       v = n <= 0 ? 0 : n == 1 ? 64 : (int) n;
       while (v & (v - 1))
 	v &= v - 1;
@@ -141,7 +142,8 @@ gomp_lithe_spin_demand_park_at (void)
   if (__builtin_expect (v < 0, 0))
     {
       const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_PARK_AT");
-      v = e ? atol (e) : 0;
+      /* default 5 since 2026-10-30 (B85/B89) */
+      v = e && *e ? atol (e) : 5;
       if (v < 0)
 	v = 0;
       __atomic_store_n (&n, v, MEMMODEL_RELAXED);
@@ -157,7 +159,7 @@ gomp_lithe_spin_demand_skip_foreign (void)
   if (__builtin_expect (v < 0, 0))
     {
       const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_SKIP_FOREIGN");
-      v = e && *e == '1';
+      v = e && *e ? *e == '1' : 1;  /* default 1 since 2026-10-30 (B89) */
       __atomic_store_n (&on, v, MEMMODEL_RELAXED);
     }
   return v;
@@ -173,6 +175,20 @@ gomp_lithe_team_foreign_master (void)
 static int gomp_lithe_nested_teams;
 
 int
+gomp_lithe_spin_demand_noreq (void)
+{
+  static int on = -1;
+  int v = __atomic_load_n (&on, MEMMODEL_RELAXED);
+  if (__builtin_expect (v < 0, 0))
+    {
+      const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_NOREQ");
+      v = e && *e ? *e == '1' : 1;  /* default 1 since 2026-10-30 (B89) */
+      __atomic_store_n (&on, v, MEMMODEL_RELAXED);
+    }
+  return v;
+}
+
+int
 gomp_lithe_spin_demand_skip_nested (void)
 {
   static int mode = -1;
@@ -180,7 +196,7 @@ gomp_lithe_spin_demand_skip_nested (void)
   if (__builtin_expect (v < 0, 0))
     {
       const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_SKIP_NESTED");
-      v = e ? atoi (e) & 3 : 0;
+      v = e && *e ? atoi (e) & 3 : 2;  /* default 2 since 2026-10-30 (B89) */
       __atomic_store_n (&mode, v, MEMMODEL_RELAXED);
     }
   if (v == 1)

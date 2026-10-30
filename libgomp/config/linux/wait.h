@@ -49,7 +49,7 @@ extern int gomp_futex_wait, gomp_futex_wake;
 /* GOMP_LITHE_SPIN_YIELD: the spin as Lithe yields (lithe_coop.h).  Returns 1
    if the word did not change within the budget (caller parks).  */
 static int __attribute__ ((noinline))
-do_spin_lithe_yield (int *addr, int val, unsigned long us)
+do_spin_lithe_yield_fn (int *addr, int val, unsigned long us, void (*yield) (void))
 {
   struct timespec t0, t;
   clock_gettime (CLOCK_MONOTONIC, &t0);
@@ -58,7 +58,7 @@ do_spin_lithe_yield (int *addr, int val, unsigned long us)
     {
       if (__atomic_load_n (addr, MEMMODEL_RELAXED) != val)
 	return 0;
-      lithe_context_yield ();
+      yield ();
       if ((i & 15) == 15)
 	{
 	  clock_gettime (CLOCK_MONOTONIC, &t);
@@ -67,6 +67,12 @@ do_spin_lithe_yield (int *addr, int val, unsigned long us)
 	    return 1;
 	}
     }
+}
+
+static inline int
+do_spin_lithe_yield (int *addr, int val, unsigned long us)
+{
+  return do_spin_lithe_yield_fn (addr, val, us, lithe_context_yield);
 }
 
 /* GOMP_LITHE_NOSPIN (team.c; default = on iff GOMP_LITHE_OWN_SCHED=1): on a
@@ -148,12 +154,22 @@ static inline int do_spin (int *addr, int val)
 		int r;
 		__atomic_add_fetch (&gomp_lithe_demand_yielders, 1,
 				    MEMMODEL_RELAXED);
-		r = do_spin_lithe_yield (addr, val, us);
+		/* GOMP_LITHE_SPIN_DEMAND_NOREQ: these yields hand the hart to
+		   the hartless peer, so no hart request (GAPS B89).  */
+		r = do_spin_lithe_yield_fn (addr, val, us,
+					    gomp_lithe_spin_demand_noreq ()
+					    && lithe_fork_join_context_yield_handoff
+					    ? lithe_fork_join_context_yield_handoff
+					    : lithe_context_yield);
 		__atomic_sub_fetch (&gomp_lithe_demand_yielders, 1,
 				    MEMMODEL_RELAXED);
 		return r;
 	      }
-	    lithe_context_yield ();
+	    if (gomp_lithe_spin_demand_noreq ()
+		&& lithe_fork_join_context_yield_handoff)
+	      lithe_fork_join_context_yield_handoff ();
+	    else
+	      lithe_context_yield ();
 	  }
 	else
 	  cpu_relax ();

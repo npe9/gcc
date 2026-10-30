@@ -30,6 +30,7 @@ extern int parlib_cpu_contended (void) __attribute__ ((weak)); /* parlib */
 extern int parlib_vcore_limit (void) __attribute__ ((weak)); /* parlib */
 extern int lithe_can_block (void) __attribute__ ((weak));
 extern void lithe_context_yield (void) __attribute__ ((weak));
+extern void lithe_fork_join_context_yield_handoff (void) __attribute__ ((weak));
 extern lithe_fork_join_sched_t *lithe_ensure_root_fork_join_sched (void)
   __attribute__ ((weak));
 extern lithe_fork_join_context_t *
@@ -178,6 +179,10 @@ extern int gomp_lithe_team_foreign_master (void);
    nested team is active in the process.  Nested 2x4 / 4x4 on 4 harts lose
    5-7 % with demand-yield while flat oversubscription gains 16-27 % (GAPS B89).  */
 extern int gomp_lithe_spin_demand_skip_nested (void);
+/* GOMP_LITHE_SPIN_DEMAND_NOREQ=1 (A/B, default 0): demand-yields go through
+   lithe_fork_join_context_yield_handoff (no hart request; LITHE_FJS_YIELD_REQUEST
+   is for blind yield-spinners).  GAPS B89.  */
+extern int gomp_lithe_spin_demand_noreq (void);
 /* =2 (bit 1): park when this hart's CPU is shared with another task right now
    (parlib_cpu_contended: the hart's OS thread was involuntarily preempted in
    the last ~1 ms) -- sees DataLoader workers, which are not Lithe processes
