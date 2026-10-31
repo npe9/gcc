@@ -29,6 +29,7 @@
 #include "libgomp.h"
 #include "pool.h"
 #include <stdlib.h>
+#include <unistd.h>
 #include <string.h>
 #include <errno.h>
 
@@ -159,10 +160,35 @@ gomp_lithe_spin_demand_skip_foreign (void)
   if (__builtin_expect (v < 0, 0))
     {
       const char *e = getenv ("GOMP_LITHE_SPIN_DEMAND_SKIP_FOREIGN");
-      v = e && *e ? *e == '1' : 1;  /* default 1 since 2026-10-30 (B89) */
+      /* default 0: a foreign master means the host is not lithified (stock
+	 CPython's joblib threads) -- port the host (lpysg: same workload,
+	 SKIP_FOREIGN 0 vs 1 identical, 1.3x the stock host), do not accommodate
+	 it (CLAUDE.md rule 9).  Was default 1 for a few hours on 2026-10-30.  */
+      v = e && *e ? *e == '1' : 0;
       __atomic_store_n (&on, v, MEMMODEL_RELAXED);
     }
   return v;
+}
+
+/* GOMP_LITHE_FOREIGN_WARN (default 1; 0 silent, 2 abort): once per process,
+   say that a team was started by a thread that is not a Lithe context while
+   Lithe is up -- an unported host thread is competing with the harts.  */
+static void
+gomp_lithe_foreign_master_warn (void)
+{
+  static int warned;
+  const char *e = getenv ("GOMP_LITHE_FOREIGN_WARN");
+  int level = e && *e ? atoi (e) : 1;
+  if (level == 0 || __atomic_exchange_n (&warned, 1, MEMMODEL_RELAXED))
+    return;
+  static const char msg[] =
+    "libgomp: warning: parallel region started by a thread that is not a Lithe"
+    " context (an unported host thread, e.g. stock CPython/joblib) while Lithe"
+    " is running; lithify the host. GOMP_LITHE_FOREIGN_WARN=0 silences, =2 aborts\n";
+  if (write (2, msg, sizeof msg - 1) < 0)
+    ;
+  if (level >= 2)
+    abort ();
 }
 
 int
@@ -703,6 +729,8 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
     gomp_lithe_own_enter ();
   team->lithe_foreign_master = gomp_lithe_active && lithe_can_block
 			       && !lithe_can_block ();
+  if (__builtin_expect (team->lithe_foreign_master, 0))
+    gomp_lithe_foreign_master_warn ();
   team->lithe_nested = nested && gomp_lithe_active;
   if (team->lithe_nested)
     __atomic_add_fetch (&gomp_lithe_nested_teams, 1, MEMMODEL_RELAXED);
